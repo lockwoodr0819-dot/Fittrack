@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1117">
+<title>FitTrack</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { background: #0f1117; font-family: -apple-system, 'Inter', 'Segoe UI', system-ui, sans-serif; color: #e8eaf0; overscroll-behavior: none; }
+  input, textarea, select, button { font-family: inherit; }
+  ::-webkit-scrollbar { display: none; }
+  input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ── Storage — uses localStorage so works offline ──────────────────────────
+const KEYS = {
+  logs: "ft:logs", prs: "ft:prs", bodyLog: "ft:bodyLog",
+  weekendFood: "ft:weekendFood", routine: "ft:routine",
+};
+function load(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch { return fallback; }
+}
+function save(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) { console.error(e); }
+}
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const fmtDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const uid = () => Math.random().toString(36).slice(2, 8);
+const DAY_KEYS = ["mon","tue","wed","thu","fri"];
+const GOAL_CALS = 2650;
+const GOAL_PROTEIN = 170;
+
+const C = {
+  bg: "#0f1117", card: "#1e2130", border: "#2a2e3d",
+  accent: "#6c63ff", accentDim: "#6c63ff22",
+  green: "#3dd68c", greenDim: "#3dd68c22",
+  red: "#ff5e5e", amber: "#f59e0b", teal: "#22d3ee",
+  text: "#e8eaf0", muted: "#7a7f96", inputBg: "#13151e",
+};
+const s = {
+  btn: (color, ghost) => ({
+    background: ghost ? "transparent" : (color||C.accent),
+    color: ghost ? (color||C.accent) : "#fff",
+    border: ghost ? `1px solid ${color||C.accent}` : "none",
+    borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 13, fontWeight: 600,
+  }),
+  input: {
+    background: C.inputBg, border: `1px solid ${C.border}`, borderRadius: 8,
+    color: C.text, padding: "8px 12px", fontSize: 13, outline: "none",
+    width: "100%", boxSizing: "border-box",
+  },
+  label: {
+    fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: "0.08em",
+    textTransform: "uppercase", marginBottom: 4, display: "block",
+  },
+  card: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 },
+};
+
+const DEFAULT_ROUTINE = {
+  mon: { label: "Monday", focus: "Chest + Biceps", exercises: [
+    { id:"m1", name:"Incline Bench Press", sets:3, reps:10, load:"11", unit:"#" },
+    { id:"m2", name:"Flys (Pec Station)", sets:3, reps:9, load:"14", unit:"#" },
+    { id:"m3", name:"Low to High Cable Flys", sets:3, reps:10, load:"3", unit:"#", note:"Low pulley — press up and across, squeeze at top" },
+    { id:"m4", name:"Bayosean Curls", sets:3, reps:10, load:"3", unit:"#", note:"Push for full 10" },
+    { id:"m5", name:"Hammer Curls", sets:3, reps:10, load:"33", unit:"lbs" },
+    { id:"m6", name:"Straight Chest Pull Downs", sets:3, reps:10, load:"4", unit:"#" },
+  ]},
+  tue: { label: "Tuesday", focus: "Back + Triceps", exercises: [
+    { id:"t1", name:"Pull-ups", sets:3, reps:12, load:"BW", unit:"" },
+    { id:"t2", name:"Lat Pull Downs", sets:3, reps:10, load:"10", unit:"#" },
+    { id:"t3", name:"Triceps Overhead Extensions", sets:3, reps:10, load:"6", unit:"#" },
+    { id:"t4", name:"Triceps Pull Down Straight Bar", sets:3, reps:10, load:"5", unit:"#" },
+    { id:"t5", name:"Tricep Rope Pull Down", sets:3, reps:10, load:"3", unit:"#" },
+  ]},
+  wed: { label: "Wednesday", focus: "Legs + Glutes", exercises: [
+    { id:"w1", name:"Leg Extensions", sets:3, reps:10, load:"9", unit:"#" },
+    { id:"w2", name:"RDLs", sets:2, reps:8, load:"175", unit:"lbs" },
+    { id:"w3", name:"Hip Thrusts", sets:3, reps:10, load:"175", unit:"lbs", note:"10 sec pause on last rep" },
+    { id:"w4", name:"Leg Press", sets:3, reps:10, load:"15", unit:"#" },
+  ]},
+  thu: { label: "Thursday", focus: "Shoulders + Core", exercises: [
+    { id:"th1", name:"Lateral Raises", sets:3, reps:10, load:"15", unit:"lbs", note:"Focus on form" },
+    { id:"th2", name:"Shoulder Press", sets:3, reps:10, load:"5", unit:"#" },
+    { id:"th3", name:"Face Pulls", sets:3, reps:10, load:"3", unit:"#" },
+    { id:"th4", name:"Side Plank", sets:3, reps:30, load:"BW", unit:"sec", note:"Each side — QL strengthener" },
+    { id:"th5", name:"Cable Woodchops", sets:3, reps:10, load:"3", unit:"#", note:"Oblique / QL work" },
+  ]},
+  fri: { label: "Friday", focus: "Arms Finisher", exercises: [
+    { id:"f1", name:"Decline Push-ups", sets:4, reps:25, load:"BW", unit:"" },
+    { id:"f2", name:"Pull-ups", sets:3, reps:12, load:"BW", unit:"" },
+    { id:"f3", name:"Preacher-style Curls", sets:3, reps:10, load:"33", unit:"lbs", note:"Use decline bench" },
+    { id:"f4", name:"Tricep Bar Pull Down", sets:3, reps:10, load:"5", unit:"#" },
+  ]},
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// TODAY TAB
+// ════════════════════════════════════════════════════════════════════════════
+function TodayTab({ logs, setLogs, bodyLog, routine }) {
+  const dow = new Date().getDay();
+  const dayMap = {1:"mon",2:"tue",3:"wed",4:"thu",5:"fri"};
+  const todayKey = dayMap[dow] || null;
+  const [activeDay, setActiveDay] = useState(todayKey || "mon");
+  const [sessionSets, setSessionSets] = useState({});
+  const [notes, setNotes] = useState("");
+  const [logging, setLogging] = useState(false);
+
+  const day = routine[activeDay];
+  const pastLogs = [...logs].filter(l => l.dayKey === activeDay).sort((a,b) => b.date.localeCompare(a.date));
+  const lastLog = pastLogs[0] || null;
+  const latestWeight = [...bodyLog].sort((a,b)=>a.date.localeCompare(b.date)).reverse().find(e=>e.weight)?.weight;
+  const doneSets = Object.values(sessionSets).flat().filter(s=>s.done).length;
+  const totalSets = Object.values(sessionSets).flat().length;
+
+  const startSession = () => {
+    const init = {};
+    day.exercises.forEach(ex => {
+      const lastEx = lastLog?.exercises?.find(e=>e.id===ex.id);
+      init[ex.id] = Array.from({length: ex.sets}, (_,i) => ({
+        reps: lastEx?.sets?.[i]?.reps ?? ex.reps,
+        load: lastEx?.sets?.[i]?.load ?? ex.load,
+        done: false,
+      }));
+    });
+    setSessionSets(init); setLogging(true); setNotes("");
+  };
+
+  const updateSet = (exId, idx, field, val) => {
+    setSessionSets(prev => {
+      const arr = [...(prev[exId]||[])];
+      arr[idx] = {...arr[idx], [field]: val};
+      return {...prev, [exId]: arr};
+    });
+  };
+  const toggleDone = (exId, idx) => {
+    setSessionSets(prev => {
+      const arr = [...(prev[exId]||[])];
+      arr[idx] = {...arr[idx], done: !arr[idx].done};
+      return {...prev, [exId]: arr};
+    });
+  };
+  const saveSession = () => {
+    const entry = {
+      id: uid(), date: todayStr(), dayKey: activeDay, focus: day.focus,
+      exercises: day.exercises.map(ex => ({id:ex.id, name:ex.name, sets:sessionSets[ex.id]||[]})),
+      notes,
+    };
+    const updated = [entry, ...logs];
+    setLogs(updated); save(KEYS.logs, updated);
+    setLogging(false); setSessionSets({});
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Day tabs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+        {DAY_KEYS.map(dk => {
+          const d = routine[dk];
+          const isActive = dk===activeDay, isToday = dk===todayKey;
+          return (
+            <button key={dk} onClick={()=>{setActiveDay(dk);setLogging(false);setSessionSets({});}} style={{
+              background: isActive?C.accent:C.card,
+              border:`1px solid ${isToday&&!isActive?C.accent:isActive?C.accent:C.border}`,
+              borderRadius:10,padding:"8px 4px",cursor:"pointer",
+              display:"flex",flexDirection:"column",alignItems:"center",gap:3,
+            }}>
+              <span style={{fontSize:11,fontWeight:700,color:isActive?"#fff":C.muted,textTransform:"uppercase"}}>{d.label.slice(0,3)}</span>
+              <span style={{fontSize:9,color:isActive?"rgba(255,255,255,0.6)":C.muted,textAlign:"center",lineHeight:1.2}}>{d.focus.split(" + ")[0]}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Header card */}
+      <div style={{...s.card,padding:"12px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:16,color:C.text}}>{day.label}</div>
+            <div style={{fontSize:12,color:C.accent,marginTop:2}}>{day.focus}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            {lastLog && <div style={{fontSize:11,color:C.muted}}>Last: {fmtDate(lastLog.date)}</div>}
+            {latestWeight && <div style={{fontSize:11,color:C.muted}}>{latestWeight} lbs</div>}
+          </div>
+        </div>
+      </div>
+
+      {!logging ? (
+        <>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {day.exercises.map(ex => {
+              const lastEx = lastLog?.exercises?.find(e=>e.id===ex.id);
+              const bestLoad = lastEx?.sets?.reduce((best,s)=>{const v=parseFloat(s.load);return(!isNaN(v)&&v>best)?v:best;},0);
+              return (
+                <div key={ex.id} style={{...s.card,padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,color:C.text,fontSize:13}}>{ex.name}</div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:2}}>Target: {ex.sets}×{ex.reps} @ {ex.load}{ex.unit}</div>
+                      {ex.note && <div style={{fontSize:11,color:C.amber,marginTop:2}}>{ex.note}</div>}
+                    </div>
+                    {lastEx && bestLoad > 0 && (
+                      <div style={{textAlign:"right",marginLeft:12}}>
+                        <div style={{fontSize:10,color:C.muted}}>Last best</div>
+                        <div style={{fontSize:14,fontWeight:800,color:C.green}}>{bestLoad}{ex.unit}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <button style={{...s.btn(),padding:"12px 16px",fontSize:14,fontWeight:700}} onClick={startSession}>
+            Start Session
+          </button>
+        </>
+      ) : (
+        <>
+          {totalSets > 0 && (
+            <div style={{...s.card,padding:"10px 14px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                <span style={{fontSize:12,color:C.muted}}>Progress</span>
+                <span style={{fontSize:12,color:C.text,fontWeight:700}}>{doneSets} / {totalSets} sets</span>
+              </div>
+              <div style={{height:6,background:C.inputBg,borderRadius:99}}>
+                <div style={{height:6,background:C.green,borderRadius:99,width:`${Math.round((doneSets/totalSets)*100)}%`,transition:"width .3s"}} />
+              </div>
+            </div>
+          )}
+
+          {day.exercises.map(ex => {
+            const lastEx = lastLog?.exercises?.find(e=>e.id===ex.id);
+            return (
+              <div key={ex.id} style={s.card}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div>
+                    <div style={{fontWeight:700,color:C.text,fontSize:13}}>{ex.name}</div>
+                    {ex.note && <div style={{fontSize:11,color:C.amber,marginTop:1}}>{ex.note}</div>}
+                  </div>
+                  {lastEx && <div style={{fontSize:11,color:C.muted}}>Last session</div>}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"24px 1fr 1fr 56px 56px",gap:6,
+                  fontSize:10,color:C.muted,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:5}}>
+                  <span>#</span><span>Load</span><span>Reps</span><span>Last</span><span>Done</span>
+                </div>
+                {(sessionSets[ex.id]||[]).map((set,idx) => {
+                  const lastSet = lastEx?.sets?.[idx];
+                  return (
+                    <div key={idx} style={{display:"grid",gridTemplateColumns:"24px 1fr 1fr 56px 56px",gap:6,alignItems:"center",marginBottom:6}}>
+                      <span style={{fontSize:11,color:C.muted,textAlign:"center"}}>{idx+1}</span>
+                      <input type="text" style={s.input} value={set.load} onChange={e=>updateSet(ex.id,idx,"load",e.target.value)} />
+                      <input type="number" style={s.input} value={set.reps} onChange={e=>updateSet(ex.id,idx,"reps",e.target.value)} />
+                      <div style={{textAlign:"center",fontSize:11,color:C.muted}}>{lastSet?`${lastSet.load}×${lastSet.reps}`:"—"}</div>
+                      <button onClick={()=>toggleDone(ex.id,idx)} style={{
+                        ...s.btn(null,!set.done), padding:"6px 0",
+                        background:set.done?C.greenDim:"transparent",
+                        border:`1px solid ${set.done?C.green:C.border}`,
+                        color:set.done?C.green:C.muted,
+                      }}>{set.done?"✓":"○"}</button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+
+          <div>
+            <span style={s.label}>Session Notes</span>
+            <textarea style={{...s.input,minHeight:56,resize:"vertical"}}
+              placeholder="How'd it go? Energy, PRs, anything to note…"
+              value={notes} onChange={e=>setNotes(e.target.value)} />
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <button style={s.btn(C.muted,true)} onClick={()=>{setLogging(false);setSessionSets({});}}>Cancel</button>
+            <button style={s.btn(C.green)} onClick={saveSession}>Save Session</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HISTORY TAB
+// ════════════════════════════════════════════════════════════════════════════
+function HistoryTab({ logs, setLogs, routine }) {
+  const [expanded, setExpanded] = useState(null);
+  const [filter, setFilter] = useState("all");
+  const filtered = filter==="all" ? logs : logs.filter(l=>l.dayKey===filter);
+  const deleteLog = id => { const u=logs.filter(l=>l.id!==id); setLogs(u); save(KEYS.logs,u); };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {["all",...DAY_KEYS].map(dk=>(
+          <button key={dk} onClick={()=>setFilter(dk)} style={{
+            padding:"5px 12px",fontSize:12,borderRadius:8,cursor:"pointer",
+            background:filter===dk?C.accent:C.inputBg,
+            color:filter===dk?"#fff":C.muted,
+            border:`1px solid ${filter===dk?C.accent:C.border}`,fontWeight:600,
+          }}>{dk==="all"?"All":routine[dk].label.slice(0,3)}</button>
+        ))}
+      </div>
+      {filtered.length===0 ? (
+        <div style={{...s.card,textAlign:"center",color:C.muted,padding:"32px 16px"}}>
+          No sessions yet. Hit Start Session on Today.
+        </div>
+      ) : (
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {filtered.map(log=>(
+            <div key={log.id} style={s.card}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}
+                onClick={()=>setExpanded(expanded===log.id?null:log.id)}>
+                <div>
+                  <div style={{fontWeight:700,color:C.text,fontSize:13}}>{log.focus}</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:2}}>{fmtDate(log.date)} · {log.exercises?.length} exercises</div>
+                  {log.notes && <div style={{fontSize:11,color:C.amber,marginTop:2}}>{log.notes.slice(0,60)}</div>}
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontSize:16,color:C.muted}}>{expanded===log.id?"∧":"∨"}</span>
+                  <button onClick={e=>{e.stopPropagation();deleteLog(log.id);}}
+                    style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:18,padding:"0 4px"}}>×</button>
+                </div>
+              </div>
+              {expanded===log.id && (
+                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8}}>
+                  {log.exercises?.map(ex=>(
+                    <div key={ex.id} style={{background:C.inputBg,borderRadius:8,padding:"8px 12px"}}>
+                      <div style={{fontWeight:700,color:C.text,fontSize:12,marginBottom:6}}>{ex.name}</div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        {ex.sets?.map((set,i)=>(
+                          <div key={i} style={{
+                            background:set.done?C.greenDim:C.card,
+                            border:`1px solid ${set.done?C.green:C.border}`,
+                            borderRadius:6,padding:"3px 8px",fontSize:11,
+                            color:set.done?C.green:C.muted,
+                          }}>{i+1}: {set.load} × {set.reps}</div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROGRESS TAB
+// ════════════════════════════════════════════════════════════════════════════
+function ProgressTab({ logs, prs, setPrs, bodyLog, setBodyLog }) {
+  const [prOpen, setPrOpen] = useState(false);
+  const [exName,setExName]=useState(""); const [prLoad,setPrLoad]=useState("");
+  const [prReps,setPrReps]=useState("1"); const [prDate,setPrDate]=useState(todayStr());
+  const [prNotes,setPrNotes]=useState(""); const [filterEx,setFilterEx]=useState("All");
+  const [bdDate,setBdDate]=useState(todayStr()); const [bdWeight,setBdWeight]=useState("");
+  const [bdMeas,setBdMeas]=useState({chest:"",waist:"",arms:"",thighs:""});
+  const [bdNotes,setBdNotes]=useState("");
+
+  const addPR = () => {
+    if(!exName.trim()||!prLoad) return;
+    const u=[...prs,{id:uid(),exercise:exName.trim(),load:prLoad,reps:prReps,date:prDate,notes:prNotes}];
+    setPrs(u);save(KEYS.prs,u);setExName("");setPrLoad("");setPrReps("1");setPrNotes("");setPrOpen(false);
+  };
+  const deletePR = id=>{const u=prs.filter(p=>p.id!==id);setPrs(u);save(KEYS.prs,u);};
+
+  const bests={};
+  prs.forEach(p=>{
+    const v=parseFloat(p.load)*(1+Number(p.reps)/30);
+    if(!bests[p.exercise]||v>bests[p.exercise].score) bests[p.exercise]={...p,score:v};
+  });
+
+  const addBody = () => {
+    if(!bdWeight&&!Object.values(bdMeas).some(Boolean)) return;
+    const u=[...bodyLog,{id:uid(),date:bdDate,weight:bdWeight,measurements:{...bdMeas},notes:bdNotes}];
+    setBodyLog(u);save(KEYS.bodyLog,u);setBdWeight("");setBdMeas({chest:"",waist:"",arms:"",thighs:""});setBdNotes("");
+  };
+  const deleteBody = id=>{const u=bodyLog.filter(e=>e.id!==id);setBodyLog(u);save(KEYS.bodyLog,u);};
+
+  const sortedBody=[...bodyLog].sort((a,b)=>a.date.localeCompare(b.date));
+  const latestBody=sortedBody[sortedBody.length-1];
+  const prevBody=sortedBody[sortedBody.length-2];
+  const wDiff=latestBody&&prevBody&&latestBody.weight&&prevBody.weight
+    ?(Number(latestBody.weight)-Number(prevBody.weight)).toFixed(1):null;
+
+  const volData=logs.slice(-10).map(log=>{
+    let vol=0;
+    log.exercises?.forEach(ex=>ex.sets?.forEach(set=>{const v=parseFloat(set.load);if(!isNaN(v))vol+=v*Number(set.reps||0);}));
+    return {date:log.date,val:vol};
+  });
+  const maxVol=Math.max(...volData.map(d=>d.val),1);
+  const totalSessions=logs.length;
+  const thisWeek=logs.filter(l=>(Date.now()-new Date(l.date+"T12:00:00").getTime())/86400000<=7).length;
+  const exNames=["All",...Array.from(new Set(prs.map(p=>p.exercise))).sort()];
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        {[{label:"Total Sessions",val:totalSessions,color:C.accent},{label:"This Week",val:thisWeek,color:C.green}].map(({label,val,color})=>(
+          <div key={label} style={{...s.card,textAlign:"center",padding:"14px 12px"}}>
+            <div style={{fontSize:28,fontWeight:800,color}}>{val}</div>
+            <div style={{fontSize:12,color:C.muted,marginTop:2}}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {latestBody && (
+        <div style={{...s.card,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em"}}>Current Weight</div>
+            <div style={{fontSize:26,fontWeight:800,color:C.teal,marginTop:2}}>{latestBody.weight} <span style={{fontSize:14,color:C.muted}}>lbs</span></div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            {wDiff!==null&&<div style={{fontSize:13,fontWeight:700,color:Number(wDiff)>0?C.green:C.red}}>{Number(wDiff)>0?"+":""}{wDiff} lbs</div>}
+            <div style={{fontSize:11,color:C.muted}}>Goal: 160 lbs</div>
+            <div style={{fontSize:11,color:C.accent,fontWeight:700}}>{Math.max(0,160-Number(latestBody.weight)).toFixed(1)} lbs to go</div>
+          </div>
+        </div>
+      )}
+
+      {/* Volume chart */}
+      {volData.some(d=>d.val>0) && (
+        <div style={s.card}>
+          <div style={{fontWeight:700,fontSize:13,color:C.text,marginBottom:12}}>Volume Per Session</div>
+          <div style={{display:"flex",alignItems:"flex-end",gap:5,height:80}}>
+            {volData.map((d,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,height:"100%",justifyContent:"flex-end"}}>
+                <div style={{fontSize:9,color:C.muted}}>{d.val>999?`${(d.val/1000).toFixed(1)}k`:d.val}</div>
+                <div style={{width:"100%",background:C.accent,borderRadius:"3px 3px 0 0",height:`${Math.max(4,(d.val/maxVol)*70)}px`}} />
+                <div style={{fontSize:9,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",maxWidth:"100%",textOverflow:"ellipsis"}}>{fmtDate(d.date)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* PRs */}
+      <div style={s.card}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.text}}>Personal Records</div>
+          <button style={s.btn(C.amber,!prOpen)} onClick={()=>setPrOpen(p=>!p)}>{prOpen?"Cancel":"+ Log PR"}</button>
+        </div>
+        {prOpen && (
+          <div style={{background:C.inputBg,borderRadius:10,padding:12,border:`1px solid ${C.border}`,marginBottom:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:8,marginBottom:8}}>
+              <div><span style={s.label}>Exercise</span>
+                <input style={s.input} placeholder="e.g. Bench Press" value={exName} onChange={e=>setExName(e.target.value)} list="pr-list" />
+                <datalist id="pr-list">{Array.from(new Set(prs.map(p=>p.exercise))).map(e=><option key={e} value={e}/>)}</datalist>
+              </div>
+              <div><span style={s.label}>Load</span><input style={s.input} value={prLoad} onChange={e=>setPrLoad(e.target.value)}/></div>
+              <div><span style={s.label}>Reps</span><input style={s.input} type="number" value={prReps} onChange={e=>setPrReps(e.target.value)}/></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:8,marginBottom:8}}>
+              <div><span style={s.label}>Date</span><input type="date" style={s.input} value={prDate} onChange={e=>setPrDate(e.target.value)}/></div>
+              <div><span style={s.label}>Notes</span><input style={s.input} value={prNotes} onChange={e=>setPrNotes(e.target.value)}/></div>
+            </div>
+            <button style={s.btn(C.amber)} onClick={addPR} disabled={!exName.trim()||!prLoad}>Save PR</button>
+          </div>
+        )}
+        {Object.keys(bests).length>0&&(
+          <div style={{marginBottom:10}}>
+            <span style={s.label}>Best Lifts</span>
+            {Object.values(bests).sort((a,b)=>a.exercise.localeCompare(b.exercise)).map(p=>(
+              <div key={p.exercise} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                background:C.inputBg,borderRadius:8,padding:"8px 12px",border:`1px solid ${C.border}`,marginBottom:6}}>
+                <span style={{fontSize:13,fontWeight:700,color:C.text}}>{p.exercise}</span>
+                <span style={{fontSize:14,fontWeight:800,color:C.amber}}>{p.load} × {p.reps}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {prs.length>0&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={s.label}>History</span>
+              <select style={{...s.input,width:"auto",fontSize:11}} value={filterEx} onChange={e=>setFilterEx(e.target.value)}>
+                {exNames.map(e=><option key={e} value={e}>{e}</option>)}
+              </select>
+            </div>
+            {[...(filterEx==="All"?prs:prs.filter(p=>p.exercise===filterEx))].reverse().map(p=>(
+              <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                background:C.inputBg,borderRadius:8,padding:"8px 12px",border:`1px solid ${C.border}`,marginBottom:6}}>
+                <div>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text}}>{p.exercise}</span>
+                  {p.notes&&<span style={{fontSize:11,color:C.muted,marginLeft:8}}>{p.notes}</span>}
+                  <div style={{fontSize:10,color:C.muted}}>{fmtDate(p.date)}</div>
+                </div>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <span style={{fontSize:13,fontWeight:800,color:C.amber}}>{p.load} × {p.reps}</span>
+                  <button onClick={()=>deletePR(p.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:16}}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Body tracker */}
+      <div style={s.card}>
+        <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Body Tracker</div>
+        <div style={{display:"grid",gap:8,marginBottom:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div><span style={s.label}>Date</span><input type="date" style={s.input} value={bdDate} onChange={e=>setBdDate(e.target.value)}/></div>
+            <div><span style={s.label}>Weight (lbs)</span><input style={s.input} type="number" placeholder="155" value={bdWeight} onChange={e=>setBdWeight(e.target.value)}/></div>
+          </div>
+          <div>
+            <span style={s.label}>Measurements (inches) — optional</span>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+              {["chest","waist","arms","thighs"].map(k=>(
+                <div key={k}>
+                  <span style={{...s.label,fontSize:9}}>{k.charAt(0).toUpperCase()+k.slice(1)}</span>
+                  <input style={s.input} type="number" placeholder="0" value={bdMeas[k]} onChange={e=>setBdMeas(p=>({...p,[k]:e.target.value}))}/>
+                </div>
+              ))}
+            </div>
+          </div>
+          <button style={s.btn(C.teal)} onClick={addBody}>Save Entry</button>
+        </div>
+        {[...bodyLog].reverse().slice(0,5).map(e=>(
+          <div key={e.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+            background:C.inputBg,borderRadius:8,padding:"8px 12px",border:`1px solid ${C.border}`,marginBottom:6}}>
+            <div>
+              <span style={{fontSize:14,fontWeight:800,color:C.teal}}>{e.weight} lbs</span>
+              <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{fmtDate(e.date)}</span>
+              {Object.entries(e.measurements||{}).filter(([,v])=>v).length>0&&(
+                <div style={{fontSize:10,color:C.muted,marginTop:2}}>
+                  {Object.entries(e.measurements).filter(([,v])=>v).map(([k,v])=>`${k}: ${v}"`).join(" · ")}
+                </div>
+              )}
+            </div>
+            <button onClick={()=>deleteBody(e.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:16}}>×</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WEEKEND TAB
+// ════════════════════════════════════════════════════════════════════════════
+function WeekendTab({ weekendFood, setWeekendFood }) {
+  const dow = new Date().getDay();
+  const [activeDay, setActiveDay] = useState(dow===0?"sun":"sat");
+  const [date, setDate] = useState(todayStr());
+  const [mealName,setMealName]=useState(""); const [cals,setCals]=useState(""); const [protein,setProtein]=useState("");
+
+  const dayMeals = weekendFood.filter(m=>m.day===activeDay&&m.date===date);
+  const totals = dayMeals.reduce((acc,m)=>({cals:acc.cals+Number(m.cals||0),protein:acc.protein+Number(m.protein||0)}),{cals:0,protein:0});
+
+  const addMeal = () => {
+    if(!mealName.trim()) return;
+    const u=[...weekendFood,{id:uid(),day:activeDay,date,name:mealName.trim(),cals,protein}];
+    setWeekendFood(u);save(KEYS.weekendFood,u);setMealName("");setCals("");setProtein("");
+  };
+  const deleteMeal = id=>{const u=weekendFood.filter(m=>m.id!==id);setWeekendFood(u);save(KEYS.weekendFood,u);};
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        {["sat","sun"].map(dk=>(
+          <button key={dk} onClick={()=>setActiveDay(dk)} style={{
+            ...s.card,cursor:"pointer",textAlign:"center",padding:"12px 8px",
+            border:`1px solid ${activeDay===dk?C.accent:C.border}`,
+            background:activeDay===dk?C.accentDim:C.card,
+          }}>
+            <div style={{fontWeight:700,color:activeDay===dk?C.accent:C.text,fontSize:14}}>{dk==="sat"?"Saturday":"Sunday"}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Rest day</div>
+          </button>
+        ))}
+      </div>
+      <div><span style={s.label}>Date</span><input type="date" style={s.input} value={date} onChange={e=>setDate(e.target.value)}/></div>
+
+      <div style={s.card}>
+        <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>{activeDay==="sat"?"Saturday":"Sunday"} — {fmtDate(date)}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          {[{label:"Calories",val:totals.cals,goal:GOAL_CALS,color:C.accent,unit:"kcal"},
+            {label:"Protein",val:totals.protein,goal:GOAL_PROTEIN,color:C.green,unit:"g"}].map(({label,val,goal,color,unit})=>{
+            const pct=Math.min(100,Math.round((val/goal)*100));
+            return (
+              <div key={label} style={{background:C.inputBg,borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>{label}</div>
+                <div style={{fontSize:20,fontWeight:800,color,marginTop:2}}>{val.toLocaleString()}<span style={{fontSize:11,color:C.muted,marginLeft:3}}>{unit}</span></div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:4}}>of {goal.toLocaleString()} goal</div>
+                <div style={{height:5,background:C.card,borderRadius:99}}>
+                  <div style={{height:5,background:color,borderRadius:99,width:`${pct}%`,transition:"width .3s"}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"grid",gap:8}}>
+          <input style={s.input} placeholder="Meal or food name" value={mealName} onChange={e=>setMealName(e.target.value)}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div><span style={s.label}>Calories</span><input style={s.input} type="number" placeholder="0" value={cals} onChange={e=>setCals(e.target.value)}/></div>
+            <div><span style={s.label}>Protein (g)</span><input style={s.input} type="number" placeholder="0" value={protein} onChange={e=>setProtein(e.target.value)}/></div>
+          </div>
+          <button style={s.btn()} onClick={addMeal}>Add</button>
+        </div>
+      </div>
+
+      {dayMeals.length>0&&(
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {dayMeals.map(m=>(
+            <div key={m.id} style={{...s.card,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px"}}>
+              <div>
+                <div style={{fontWeight:700,color:C.text,fontSize:13}}>{m.name}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>{m.cals?`${m.cals} kcal`:""}{m.protein?` · ${m.protein}g protein`:""}</div>
+              </div>
+              <button onClick={()=>deleteMeal(m.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:18}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ROUTINE TAB
+// ════════════════════════════════════════════════════════════════════════════
+function RoutineTab({ routine, setRoutine }) {
+  const [activeDay, setActiveDay] = useState("mon");
+  const day = routine[activeDay];
+
+  const updateFocus = val => {
+    const u={...routine,[activeDay]:{...day,focus:val}};
+    setRoutine(u);save(KEYS.routine,u);
+  };
+  const updateEx = (eid,field,val) => {
+    const u={...routine,[activeDay]:{...day,exercises:day.exercises.map(ex=>ex.id===eid?{...ex,[field]:val}:ex)}};
+    setRoutine(u);save(KEYS.routine,u);
+  };
+  const deleteEx = eid => {
+    const u={...routine,[activeDay]:{...day,exercises:day.exercises.filter(ex=>ex.id!==eid)}};
+    setRoutine(u);save(KEYS.routine,u);
+  };
+  const addEx = () => {
+    const newEx={id:uid(),name:"New Exercise",sets:3,reps:10,load:"1",unit:"#",note:""};
+    const u={...routine,[activeDay]:{...day,exercises:[...day.exercises,newEx]}};
+    setRoutine(u);save(KEYS.routine,u);
+  };
+  const moveEx = (eid,dir) => {
+    const exs=[...day.exercises];
+    const idx=exs.findIndex(e=>e.id===eid), swap=idx+dir;
+    if(swap<0||swap>=exs.length) return;
+    [exs[idx],exs[swap]]=[exs[swap],exs[idx]];
+    const u={...routine,[activeDay]:{...day,exercises:exs}};
+    setRoutine(u);save(KEYS.routine,u);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{...s.card,padding:"10px 12px",border:`1px solid ${C.amber}44`}}>
+        <div style={{fontSize:12,color:C.amber,fontWeight:600}}>Changes save instantly and carry over to your sessions.</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+        {DAY_KEYS.map(dk=>(
+          <button key={dk} onClick={()=>setActiveDay(dk)} style={{
+            background:activeDay===dk?C.accent:C.card,
+            border:`1px solid ${activeDay===dk?C.accent:C.border}`,
+            borderRadius:10,padding:"8px 4px",cursor:"pointer",
+            display:"flex",flexDirection:"column",alignItems:"center",gap:2,
+          }}>
+            <span style={{fontSize:11,fontWeight:700,color:activeDay===dk?"#fff":C.muted,textTransform:"uppercase"}}>{routine[dk].label.slice(0,3)}</span>
+            <span style={{fontSize:9,color:activeDay===dk?"rgba(255,255,255,0.6)":C.muted}}>{routine[dk].exercises.length} ex</span>
+          </button>
+        ))}
+      </div>
+      <div style={s.card}>
+        <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:10}}>{day.label}</div>
+        <span style={s.label}>Day Focus</span>
+        <input style={s.input} value={day.focus} onChange={e=>updateFocus(e.target.value)} placeholder="e.g. Chest + Biceps"/>
+      </div>
+      {day.exercises.map((ex,idx)=>(
+        <div key={ex.id} style={s.card}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>moveEx(ex.id,-1)} disabled={idx===0}
+                style={{...s.btn(C.muted,true),padding:"4px 10px",opacity:idx===0?0.3:1}}>↑</button>
+              <button onClick={()=>moveEx(ex.id,1)} disabled={idx===day.exercises.length-1}
+                style={{...s.btn(C.muted,true),padding:"4px 10px",opacity:idx===day.exercises.length-1?0.3:1}}>↓</button>
+            </div>
+            <button onClick={()=>deleteEx(ex.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:20}}>×</button>
+          </div>
+          <div style={{display:"grid",gap:8}}>
+            <div><span style={s.label}>Exercise Name</span>
+              <input style={s.input} value={ex.name} onChange={e=>updateEx(ex.id,"name",e.target.value)}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
+              <div><span style={s.label}>Sets</span><input style={s.input} type="number" value={ex.sets} onChange={e=>updateEx(ex.id,"sets",Number(e.target.value))}/></div>
+              <div><span style={s.label}>Reps</span><input style={s.input} type="number" value={ex.reps} onChange={e=>updateEx(ex.id,"reps",Number(e.target.value))}/></div>
+              <div><span style={s.label}>Load</span><input style={s.input} value={ex.load} onChange={e=>updateEx(ex.id,"load",e.target.value)}/></div>
+              <div><span style={s.label}>Unit</span><input style={s.input} value={ex.unit||""} placeholder="#/lbs/sec" onChange={e=>updateEx(ex.id,"unit",e.target.value)}/></div>
+            </div>
+            <div><span style={s.label}>Note</span>
+              <input style={s.input} value={ex.note||""} placeholder="Form cue, reminder…" onChange={e=>updateEx(ex.id,"note",e.target.value)}/></div>
+          </div>
+        </div>
+      ))}
+      <button style={{...s.btn(C.green),padding:"12px 16px"}} onClick={addEx}>+ Add Exercise to {day.label}</button>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ROOT
+// ════════════════════════════════════════════════════════════════════════════
+const TABS = [
+  {id:"today",label:"Today"},
+  {id:"history",label:"History"},
+  {id:"progress",label:"Progress"},
+  {id:"weekend",label:"Weekend"},
+  {id:"routine",label:"Routine"},
+];
+
+function App() {
+  const [tab, setTab] = useState("today");
+  const [logs, setLogs] = useState([]);
+  const [prs, setPrs] = useState([]);
+  const [bodyLog, setBodyLog] = useState([]);
+  const [weekendFood, setWeekendFood] = useState([]);
+  const [routine, setRoutine] = useState(DEFAULT_ROUTINE);
+
+  useEffect(() => {
+    setLogs(load(KEYS.logs,[]));
+    setPrs(load(KEYS.prs,[]));
+    setBodyLog(load(KEYS.bodyLog,[]));
+    setWeekendFood(load(KEYS.weekendFood,[]));
+    const rt = load(KEYS.routine, null);
+    if(rt) setRoutine(rt);
+  }, []);
+
+  const dow = new Date().getDay();
+  const isWeekend = dow===0||dow===6;
+
+  return (
+    <div style={{background:C.bg,minHeight:"100vh",color:C.text,paddingBottom:60}}>
+      <div style={{borderBottom:`1px solid ${C.border}`,padding:"14px 16px 0",position:"sticky",top:0,background:C.bg,zIndex:10}}>
+        <div style={{maxWidth:640,margin:"0 auto"}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:12}}>
+            <span style={{fontSize:18,fontWeight:800,letterSpacing:"-0.02em"}}>FitTrack</span>
+            <span style={{fontSize:11,color:isWeekend?C.green:C.accent,fontWeight:600}}>
+              {isWeekend?"Rest Day":"Training Day"} · {todayStr()}
+            </span>
+          </div>
+          <div style={{display:"flex",overflowX:"auto"}}>
+            {TABS.map(t=>(
+              <button key={t.id} onClick={()=>setTab(t.id)} style={{
+                background:"none",border:"none",cursor:"pointer",
+                padding:"6px 14px",whiteSpace:"nowrap",
+                fontSize:13,fontWeight:tab===t.id?700:500,
+                color:tab===t.id?C.text:C.muted,
+                borderBottom:`2px solid ${tab===t.id?C.accent:"transparent"}`,
+                marginBottom:-1,
+              }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{maxWidth:640,margin:"0 auto",padding:"20px 16px 0"}}>
+        {tab==="today"&&<TodayTab logs={logs} setLogs={setLogs} bodyLog={bodyLog} routine={routine}/>}
+        {tab==="history"&&<HistoryTab logs={logs} setLogs={setLogs} routine={routine}/>}
+        {tab==="progress"&&<ProgressTab logs={logs} prs={prs} setPrs={setPrs} bodyLog={bodyLog} setBodyLog={setBodyLog}/>}
+        {tab==="weekend"&&<WeekendTab weekendFood={weekendFood} setWeekendFood={setWeekendFood}/>}
+        {tab==="routine"&&<RoutineTab routine={routine} setRoutine={setRoutine}/>}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+</script>
+</body>
+</html>
