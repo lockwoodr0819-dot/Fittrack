@@ -28,6 +28,7 @@ const { useState, useEffect, useCallback } = React;
 const KEYS = {
   logs: "ft:logs", prs: "ft:prs", bodyLog: "ft:bodyLog",
   weekendFood: "ft:weekendFood", routine: "ft:routine",
+  session: "ft:activeSession",
 };
 function load(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
@@ -126,6 +127,24 @@ function TodayTab({ logs, setLogs, bodyLog, routine }) {
   const doneSets = Object.values(sessionSets).flat().filter(s=>s.done).length;
   const totalSets = Object.values(sessionSets).flat().length;
 
+  // Restore any in-progress session on load
+  useEffect(() => {
+    const saved = load(KEYS.session, null);
+    if (saved && saved.dayKey) {
+      setActiveDay(saved.dayKey);
+      setSessionSets(saved.sessionSets || {});
+      setNotes(saved.notes || "");
+      setLogging(true);
+    }
+  }, []);
+
+  // Auto-save session whenever it changes
+  useEffect(() => {
+    if (logging) {
+      save(KEYS.session, { dayKey: activeDay, sessionSets, notes });
+    }
+  }, [sessionSets, notes, logging, activeDay]);
+
   const startSession = () => {
     const init = {};
     day.exercises.forEach(ex => {
@@ -161,6 +180,8 @@ function TodayTab({ logs, setLogs, bodyLog, routine }) {
     };
     const updated = [entry, ...logs];
     setLogs(updated); save(KEYS.logs, updated);
+    save(KEYS.session, null);
+    localStorage.removeItem(KEYS.session);
     setLogging(false); setSessionSets({});
   };
 
